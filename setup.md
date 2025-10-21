@@ -90,7 +90,7 @@ Install the client libraries used by `generate_data.py` and `verify.py` in the s
 
 ```
 source .venv/bin/activate
-pip install kafka-python timeplus-connect clickhouse-connect
+pip install kafka-python timeplus-connect clickhouse-connect dbt-timeplus
 ```
 
 ## Initialize Timeplus resources with dbt
