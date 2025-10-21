@@ -4,6 +4,7 @@ Verify the E2E pipeline is working correctly
 """
 
 import time
+import os
 import json
 import sys
 from kafka import KafkaConsumer
@@ -41,12 +42,13 @@ def check_timeplus():
     """Check Timeplus streams and processing"""
     print("\n🔍 Checking Timeplus...")
     try:
+        db_name = os.getenv('TP_DB', 'default')
         client = timeplus_connect.create_client(
             host='localhost',
             port=8123,
             username='default',
             password='',
-            database='e2e_test'
+            database=db_name
         )
 
         # Check if external stream exists

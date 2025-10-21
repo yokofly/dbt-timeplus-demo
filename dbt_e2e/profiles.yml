@@ -1,0 +1,10 @@
+timeplus_e2e:
+  outputs:
+    dev:
+      type: timeplus
+      host: localhost
+      port: 8463
+      user: default
+      password: ''
+      schema: default
+  target: dev

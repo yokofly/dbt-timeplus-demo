@@ -1,32 +1,54 @@
 setup.md
 
 ## Start infrastructure
+
+```sh
 echo "🐳 Starting Docker containers..."
 docker compose down -v 2>/dev/null || true
 docker compose up -d
+```
 
 ## Wait for services
-wait_for_service localhost 2181 "Zookeeper"
-wait_for_service localhost 9092 "Kafka"
-wait_for_service localhost 9000 "ClickHouse"
-wait_for_service localhost 8463 "Timeplus"  # Assuming Timeplus is already running
 
-echo "⏳ Waiting for services to fully initialize..."
-sleep 10
+```sh
 
-## prepare env
+echo "⏳ Sleeping 5 seconds to let services start..."
+sleep 5
+
+echo "⏳ Checking Zookeeper on localhost:2181..."
+nc -zv localhost 2181
+
+echo "⏳ Checking Kafka on localhost:9092..."
+nc -zv localhost 9092
+
+echo "⏳ Checking ClickHouse on localhost:9000..."
+nc -zv localhost 9000
+
+echo "⏳ Checking Timeplus on localhost:8463..."
+nc -zv localhost 8463
+```
+
+
+## Prepare environment
+
+```sh
 
 echo "📝 Creating Kafka topic..."
 docker exec e2e_kafka kafka-topics \
-    --create \
-    --topic e2e_events \
-    --bootstrap-server localhost:9092 \
-    --partitions 3 \
-    --replication-factor 1 \
-    --if-not-exists
+  --create \
+  --topic e2e_events \
+  --bootstrap-server localhost:9092 \
+  --partitions 3 \
+  --replication-factor 1 \
+  --if-not-exists
+
+```
 
 
-## Create ClickHouse table
+## Create ClickHouse table (sink)
+
+```sh
+
 echo "📊 Creating ClickHouse table..."
 docker exec e2e_clickhouse clickhouse-client -mn --query "
 DROP TABLE IF EXISTS e2e_aggregation_results;
@@ -48,45 +70,67 @@ ORDER BY (win_start, user_id)
 PARTITION BY toYYYYMM(win_start);
 "
 
-
-
-## Create Timeplus database
-echo "🏗️ Creating Timeplus database..."
-docker exec e2e_timeplus proton-client \
-    -u proton \
-    --password proton@t+ \
-    --query "CREATE DATABASE IF NOT EXISTS e2e_test"
-echo "✅ Created e2e_test database in Timeplus"
-
-## create timeplus table(shall replaced by dbt?)
-
-```
- python3 setup_timeplus.py                                 
-🔧 Setting up Timeplus objects...
-   Creating database e2e_test...
-   Cleaning up existing objects...
-   Creating Kafka external stream...
-   Creating aggregation stream...
-   Creating aggregation materialized view...
-   Creating ClickHouse external table...
-   Creating ClickHouse sink materialized view...
-   Creating analytics view...
-✅ Timeplus objects created successfully!
-
-📋 Created objects:
-   Streams: clickhouse_results
-event_aggregations
-event_aggregations_mv
-kafka_events_stream
-to_clickhouse_mv
-user_activity_summary
 ```
 
-## ingestion testing data
+## Install dbt-timeplus (PyPI)
 
+Install the adapter into a virtualenv:
 
 ```
-source ~/miniconda3/bin/activate py310test  && python3 generate_data.py                                      
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install dbt-timeplus
+dbt --version  # should show timeplus adapter
+```
+
+## Install Python packages for generator and verification
+
+Install the client libraries used by `generate_data.py` and `verify.py` in the same venv:
+
+```
+source .venv/bin/activate
+pip install kafka-python timeplus-connect clickhouse-connect
+```
+
+## Initialize Timeplus resources with dbt
+
+Use standard dbt commands with the included project under `dbt_e2e/`.
+
+```
+# Point dbt to the bundled profiles.yml (or copy it to ~/.dbt/profiles.yml)
+export DBT_PROFILES_DIR=$(pwd)/dbt_e2e
+
+# Set sink/source env vars as needed (or rely on defaults)
+export KAFKA_BROKERS=kafka:29092
+export KAFKA_TOPIC=e2e_events
+export CH_ADDRESS=clickhouse:9000
+export CH_DATABASE=default
+export CH_TABLE=e2e_aggregation_results
+
+# Create/refresh resources in Timeplus
+dbt run --project-dir dbt_e2e
+
+# (Optional) run tests if you add them later
+dbt test --project-dir dbt_e2e
+```
+
+Models in `dbt_e2e/models`:
+- `01_event_aggregations_mv.sql`: creates `kafka_events_stream`, `event_aggregations`, and MV `event_aggregations_mv`.
+- `02_to_clickhouse_mv.sql`: creates external table `clickhouse_results` and MV `to_clickhouse_mv`.
+- `03_user_activity_summary.sql`: a view for analytics on `event_aggregations`.
+
+
+## Ingest testing data
+
+```
+source .venv/bin/activate
+python3 generate_data.py
+```
+
+Example output:
+
+```
 📤 Starting event generation...
    Rate: 10 events/second
    Duration: 60 seconds
@@ -94,15 +138,20 @@ source ~/miniconda3/bin/activate py310test  && python3 generate_data.py
 
    Generated 600 events...
 ✅ Generated 600 events in 60 seconds
-(py310test) ➜  kafka-timeplus-clickhouse 
-
-
 ```
 
-## query from clickhouse
+
+## Verify from ClickHouse and Timeplus
 
 ```
-source ~/miniconda3/bin/activate py310test  &&  python3 verify.py 
+source .venv/bin/activate
+# If you deployed into the default database via dbt_e2e/profiles.yml
+TP_DB=default python3 verify.py
+```
+
+Example output:
+
+```
 🔬 E2E Pipeline Verification
 ==================================================
 🔍 Checking Kafka...
@@ -110,23 +159,19 @@ source ~/miniconda3/bin/activate py310test  &&  python3 verify.py
 
 🔍 Checking Timeplus...
    ✅ Connected to Timeplus
-   Available streams: <timeplus_connect.driver.summary.QuerySummary object at 0x75681a3aff40>
-   Aggregation stats: ['580', '2025-10-20 22:08:40.000', '2025-10-20 22:09:40.000']
-   Top 5 users by amount: ['user_0035', '6', '1560.22\nuser_0085', '11', '1476.52\nuser_0027', '8', '1434.68\nuser_0095', '8', '1358\nuser_0007', '8', '1233.06']
+   Available streams: <...>
+   Aggregation stats: [...]
+   Top 5 users by amount: [...]
 
 🔍 Checking ClickHouse...
    ✅ ClickHouse has data:
       Total records: 580
-      Date range: 2025-10-20 22:08:40 to 2025-10-20 22:09:40
+      Date range: ...
       Unique users: 100
       Event types: 6
 
    Recent aggregations:
-      (datetime.datetime(2025, 10, 20, 22, 9, 30), 'user_0099', 'checkout', 'us-east', 1, 254.04)
-      (datetime.datetime(2025, 10, 20, 22, 9, 30), 'user_0097', 'purchase', 'us-east', 1, 67.62)
-      (datetime.datetime(2025, 10, 20, 22, 9, 30), 'user_0095', 'add_to_cart', 'us-west', 1, 133.71)
-      (datetime.datetime(2025, 10, 20, 22, 9, 30), 'user_0093', 'checkout', 'us-west', 1, 218.83)
-      (datetime.datetime(2025, 10, 20, 22, 9, 30), 'user_0093', 'checkout', 'ap-south', 1, 48.59)
+      (...)
 
 ==================================================
 📊 Summary:
@@ -135,5 +180,4 @@ source ~/miniconda3/bin/activate py310test  &&  python3 verify.py
    ClickHouse: ✅ OK
 
 🎉 Pipeline is working correctly!
-(py310test) ➜  kafka-timeplus-clickhouse 
 ```
