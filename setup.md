@@ -72,24 +72,14 @@ PARTITION BY toYYYYMM(win_start);
 
 ```
 
-## Install dbt-timeplus (PyPI)
-
-Install the adapter into a virtualenv:
-
-```
-python3 -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install dbt-timeplus
-dbt --version  # should show timeplus adapter
-```
-
 ## Install Python packages for generator and verification
 
 Install the client libraries used by `generate_data.py` and `verify.py` in the same venv:
 
 ```
-source .venv/bin/activate
+source ~/miniconda3/bin/activate
+conda create -n py310_oct23 -y   python=3.10 
+conda activate py310_oct23
 pip install kafka-python timeplus-connect clickhouse-connect dbt-timeplus
 ```
 
@@ -100,13 +90,6 @@ Use standard dbt commands with the included project under `dbt_e2e/`.
 ```
 # Point dbt to the bundled profiles.yml (or copy it to ~/.dbt/profiles.yml)
 export DBT_PROFILES_DIR=$(pwd)/dbt_e2e
-
-# Set sink/source env vars as needed (or rely on defaults)
-export KAFKA_BROKERS=kafka:29092
-export KAFKA_TOPIC=e2e_events
-export CH_ADDRESS=clickhouse:9000
-export CH_DATABASE=default
-export CH_TABLE=e2e_aggregation_results
 
 # Create/refresh resources in Timeplus
 dbt run --project-dir dbt_e2e
